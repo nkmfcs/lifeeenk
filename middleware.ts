@@ -6,10 +6,15 @@ export async function middleware(req: NextRequest) {
   const ok = await verifySessionToken(token, process.env.AUTH_SECRET);
   if (ok) return NextResponse.next();
 
-  const url = req.nextUrl.clone();
-  url.pathname = "/login";
-  url.search = "";
-  return NextResponse.redirect(url);
+  // За прокси (Railway) внутренний адрес — localhost:8080, поэтому берём
+  // настоящий хост и протокол из заголовков прокси.
+  const host =
+    req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? req.nextUrl.host;
+  const proto =
+    req.headers.get("x-forwarded-proto")?.split(",")[0] ??
+    (host.startsWith("localhost") ? "http" : "https");
+
+  return NextResponse.redirect(new URL("/login", `${proto}://${host}`), 307);
 }
 
 export const config = {

@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import {
   SESSION_COOKIE,
   SESSION_DAYS,
   createSessionToken,
   safeEqual,
 } from "@/lib/session";
+import { redirectTo } from "@/lib/redirect";
 
 export async function POST(req: NextRequest) {
   const form = await req.formData();
@@ -12,17 +13,11 @@ export async function POST(req: NextRequest) {
   const expected = process.env.APP_PASSWORD;
   const secret = process.env.AUTH_SECRET;
 
-  const url = req.nextUrl.clone();
-  url.search = "";
-
   if (!expected || !secret || !safeEqual(password, expected)) {
-    url.pathname = "/login";
-    url.searchParams.set("error", "1");
-    return NextResponse.redirect(url, 303);
+    return redirectTo("/login?error=1");
   }
 
-  url.pathname = "/";
-  const res = NextResponse.redirect(url, 303);
+  const res = redirectTo("/");
   res.cookies.set(SESSION_COOKIE, await createSessionToken(secret), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
