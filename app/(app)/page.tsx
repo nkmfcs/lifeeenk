@@ -2,7 +2,7 @@ import Link from "next/link";
 import EntryRow from "@/components/EntryRow";
 import NoDatabase from "@/components/NoDatabase";
 import { hasDatabase } from "@/lib/db";
-import { listEntriesSince, startOfTodayTashkent, sumExpenses, formatSum, TZ } from "@/lib/finance";
+import { listEntriesSince, startOfTodayTashkent, sumType, formatSum, TZ } from "@/lib/finance";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +26,8 @@ export default async function HomePage() {
       failed = true;
     }
   }
-  const spent = sumExpenses(entries, start);
+  const spent = sumType(entries, start, "expense");
+  const earned = sumType(entries, start, "income");
 
   return (
     <>
@@ -45,18 +46,27 @@ export default async function HomePage() {
 
       {dbReady && !failed ? (
         <>
-          {spent.count > 0 ? (
+          {spent.count + earned.count > 0 ? (
             <section className="card">
-              <div className="page-sub">Расходы за сегодня</div>
-              <div className="big">{formatSum(spent.total)}</div>
-              <div className="page-sub">записей: {spent.count}</div>
+              {spent.count > 0 ? (
+                <div className="kv">
+                  <span className="k">Расходы за сегодня</span>
+                  <span className="v">−{formatSum(spent.total)}</span>
+                </div>
+              ) : null}
+              {earned.count > 0 ? (
+                <div className="kv">
+                  <span className="k">Доходы за сегодня</span>
+                  <span className="v plus">+{formatSum(earned.total)}</span>
+                </div>
+              ) : null}
             </section>
-          ) : (
+          ) : entries.length === 0 ? (
             <section className="card empty">
               За сегодня записей нет. Это не значит, что вы ничего не потратили:
               расход считается только после того, как вы его внесли.
             </section>
-          )}
+          ) : null}
 
           {entries.length > 0 ? (
             <section className="list" aria-label="Записи за сегодня">
@@ -67,7 +77,7 @@ export default async function HomePage() {
           ) : null}
 
           <Link href="/new-expense" className="btn" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-            Добавить расход
+            Добавить запись
           </Link>
         </>
       ) : null}

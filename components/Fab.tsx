@@ -10,7 +10,7 @@ export default function Fab() {
   if (!SHOW_ON.includes(pathname)) return null;
 
   return (
-    <Link href="/new-expense" className="fab" aria-label="Новый расход">
+    <Link href="/new-expense" className="fab" aria-label="Новая запись">
       <svg
         width="26"
         height="26"

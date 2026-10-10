@@ -2,16 +2,17 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { addExpense, deleteEntry, parseExpense } from "@/lib/finance";
+import { addEntry, deleteEntry, entryTypeFrom, parseEntry } from "@/lib/finance";
 
-export async function createExpense(formData: FormData) {
-  const parsed = parseExpense(formData);
-  if (!parsed.ok) redirect(`/new-expense?error=${parsed.error}`);
+export async function createEntry(formData: FormData) {
+  const type = entryTypeFrom(formData.get("type"));
+  const parsed = parseEntry(formData);
+  if (!parsed.ok) redirect(`/new-expense?type=${type}&error=${parsed.error}`);
 
   try {
-    await addExpense(parsed.value);
+    await addEntry(parsed.value);
   } catch {
-    redirect("/new-expense?error=save");
+    redirect(`/new-expense?type=${type}&error=save`);
   }
   revalidatePath("/", "layout");
   redirect("/finance");

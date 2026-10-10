@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 export const TZ = "Asia/Tashkent";
 const TZ_OFFSET_MS = 5 * 60 * 60 * 1000; // Ташкент: UTC+5, без перехода на летнее время
 
-export const CATEGORIES = [
+export const EXPENSE_CATEGORIES = [
   "Транспорт",
   "Еда",
   "Прокат костюмов",
@@ -13,8 +13,12 @@ export const CATEGORIES = [
   "Другое",
 ] as const;
 
+export const INCOME_CATEGORIES = ["Прокат костюмов", "Пошив", "Зарплата", "Подарок", "Другое"] as const;
+
 export const ACCOUNTS = ["Наличные", "Карта"] as const;
+
 export type Scope = "personal" | "business";
+export type EntryType = "expense" | "income" | "transfer";
 
 export type Entry = {
   id: string;
@@ -23,62 +27,99 @@ export type Entry = {
   data: Record<string, unknown>;
 };
 
-export type ExpenseInput = {
-  amount: number;
-  scope: Scope;
-  category: string;
-  account: string;
-  description: string;
-  occurredAt: Date;
-};
+export type NewEntry =
+  | {
+      type: "expense" | "income";
+      amount: number;
+      scope: Scope;
+      category: string;
+      account: string;
+      description: string;
+      occurredAt: Date;
+    }
+  | {
+      type: "transfer";
+      amount: number;
+      from: string;
+      to: string;
+      description: string;
+      occurredAt: Date;
+    };
 
-export type ParseResult =
-  | { ok: true; value: ExpenseInput }
-  | { ok: false; error: "amount" | "category" | "date" };
+export type ParseError = "amount" | "category" | "date" | "accounts";
+export type ParseResult = { ok: true; value: NewEntry } | { ok: false; error: ParseError };
+
+export function entryTypeFrom(raw: unknown): EntryType {
+  return raw === "income" || raw === "transfer" ? raw : "expense";
+}
 
 /* ---------- Разбор формы ---------- */
 
-export function parseExpense(form: FormData): ParseResult {
-  const rawAmount = String(form.get("amount") ?? "").replace(/[\s ,]/g, "");
-  if (!/^\d{1,12}$/.test(rawAmount)) return { ok: false, error: "amount" };
-  const amount = Number(rawAmount);
-  if (!Number.isSafeInteger(amount) || amount <= 0) return { ok: false, error: "amount" };
+function parseAmount(form: FormData): number | null {
+  const raw = String(form.get("amount") ?? "").replace(/[\s ,]/g, "");
+  if (!/^\d{1,12}$/.test(raw)) return null;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
+function parseWhen(form: FormData): Date | null {
+  const when = String(form.get("when") ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(when)) return null;
+  const d = new Date(`${when}:00+05:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function pickAccount(raw: unknown, fallback: string): string {
+  const v = String(raw ?? "");
+  return (ACCOUNTS as readonly string[]).includes(v) ? v : fallback;
+}
+
+export function parseEntry(form: FormData): ParseResult {
+  const type = entryTypeFrom(form.get("type"));
+
+  const amount = parseAmount(form);
+  if (amount === null) return { ok: false, error: "amount" };
+
+  const occurredAt = parseWhen(form);
+  if (!occurredAt) return { ok: false, error: "date" };
+
+  const description = String(form.get("description") ?? "").trim().slice(0, 200);
+
+  if (type === "transfer") {
+    const from = pickAccount(form.get("from"), ACCOUNTS[0]);
+    const to = pickAccount(form.get("to"), ACCOUNTS[1]);
+    if (from === to) return { ok: false, error: "accounts" };
+    return { ok: true, value: { type, amount, from, to, description, occurredAt } };
+  }
 
   const scope: Scope = form.get("scope") === "business" ? "business" : "personal";
-
   const custom = String(form.get("customCategory") ?? "").trim();
   const chosen = String(form.get("category") ?? "").trim();
   const category = (custom || chosen).slice(0, 40);
   if (!category) return { ok: false, error: "category" };
 
-  const rawAccount = String(form.get("account") ?? "");
-  const account = (ACCOUNTS as readonly string[]).includes(rawAccount) ? rawAccount : ACCOUNTS[0];
-
-  const when = String(form.get("when") ?? "");
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(when)) return { ok: false, error: "date" };
-  const occurredAt = new Date(`${when}:00+05:00`);
-  if (Number.isNaN(occurredAt.getTime())) return { ok: false, error: "date" };
-
-  const description = String(form.get("description") ?? "").trim().slice(0, 200);
-
-  return { ok: true, value: { amount, scope, category, account, description, occurredAt } };
+  const account = pickAccount(form.get("account"), ACCOUNTS[0]);
+  return { ok: true, value: { type, amount, scope, category, account, description, occurredAt } };
 }
 
 /* ---------- Запросы ---------- */
 
-export async function addExpense(input: ExpenseInput): Promise<void> {
+export async function addEntry(e: NewEntry): Promise<void> {
   const sql = await db();
-  const data = {
-    amount: input.amount,
-    currency: "UZS",
-    scope: input.scope,
-    category: input.category,
-    account: input.account,
-    description: input.description,
-  };
+  const data =
+    e.type === "transfer"
+      ? { amount: e.amount, currency: "UZS", from: e.from, to: e.to, description: e.description }
+      : {
+          amount: e.amount,
+          currency: "UZS",
+          scope: e.scope,
+          category: e.category,
+          account: e.account,
+          description: e.description,
+        };
   await sql`
     insert into entries (type, occurred_at, data, source)
-    values ('expense', ${input.occurredAt.toISOString()}, ${sql.json(data)}, 'manual')
+    values (${e.type}, ${e.occurredAt.toISOString()}, ${sql.json(data)}, 'manual')
   `;
 }
 
@@ -149,17 +190,14 @@ export function nowLocalInput(now = new Date()): string {
 }
 
 /* ---------- Итоги ---------- */
+// Переводы между счетами в итоги не входят: это не доход и не расход.
 
 export type Totals = { count: number; total: number; personal: number; business: number };
 
-function emptyTotals(): Totals {
-  return { count: 0, total: 0, personal: 0, business: 0 };
-}
-
-export function sumExpenses(entries: Entry[], from: Date): Totals {
-  const t = emptyTotals();
+export function sumType(entries: Entry[], from: Date, type: "expense" | "income"): Totals {
+  const t: Totals = { count: 0, total: 0, personal: 0, business: 0 };
   for (const e of entries) {
-    if (e.type !== "expense" || e.occurredAt < from) continue;
+    if (e.type !== type || e.occurredAt < from) continue;
     const amount = Number(e.data.amount);
     if (!Number.isFinite(amount)) continue;
     t.count += 1;
@@ -170,14 +208,16 @@ export function sumExpenses(entries: Entry[], from: Date): Totals {
   return t;
 }
 
-export async function expenseTotals(now = new Date()) {
+export type Period = { expense: Totals; income: Totals };
+
+export async function periodTotals(now = new Date()): Promise<{ week: Period; month: Period }> {
   const weekStart = startOfWeekTashkent(now);
   const monthStart = startOfMonthTashkent(now);
   const earliest = weekStart < monthStart ? weekStart : monthStart;
   const entries = await listEntriesSince(earliest);
   return {
-    week: sumExpenses(entries, weekStart),
-    month: sumExpenses(entries, monthStart),
+    week: { expense: sumType(entries, weekStart, "expense"), income: sumType(entries, weekStart, "income") },
+    month: { expense: sumType(entries, monthStart, "expense"), income: sumType(entries, monthStart, "income") },
   };
 }
 
@@ -185,6 +225,10 @@ export async function expenseTotals(now = new Date()) {
 
 export function formatSum(n: number): string {
   return `${new Intl.NumberFormat("ru-RU").format(n)} сум`;
+}
+
+export function formatSigned(n: number): string {
+  return `${n < 0 ? "−" : "+"}${formatSum(Math.abs(n))}`;
 }
 
 export function formatTime(d: Date): string {
